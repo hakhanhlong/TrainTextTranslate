@@ -1,3 +1,5 @@
+#pip install fastapi uvicorn python-multipart pydantic underthesea sentence-transformers scikit-learn numpy jsonlines
+
 import re
 import os
 import unicodedata
