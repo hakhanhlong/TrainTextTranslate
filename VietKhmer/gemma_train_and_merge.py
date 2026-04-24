@@ -26,7 +26,7 @@ ADAPTER_DIR = "/mnt/e/AILAB/MODELS/gemma-2b-vi-km-adapter"
 FINAL_DIR = "/mnt/e/AILAB/MODELS/gemma-2b-vi-km-final" # Đã sửa lỗi dư dấu '/' trong đường dẫn
 CSV_FILE_PATH = "/mnt/e/AILAB/DATASET_TEXT_TRAIN/data_vi_kh.csv"
 
-hf_token = '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' 
+#hf_token = '' 
 
 # Tối ưu cho GPU 12GB VRAM x 2
 BATCH_SIZE = 2 
