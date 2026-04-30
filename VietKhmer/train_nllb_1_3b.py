@@ -18,11 +18,11 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # ==========================================
 MODEL_ID = "facebook/nllb-200-1.3B" # Đổi thành "facebook/nllb-200-3.3B" nếu GPU > 24GB VRAM
 DATA_PATH = "/mnt/e/AILAB/DATASET_TEXT_TRAIN/data_vi_kh.csv"
-OUTPUT_DIR = "/mnt/e/AILAB/MODELS/nllb-vi-km-lora"
+OUTPUT_DIR = "/mnt/e/AILAB/MODELS/nllb-vi-km-lora_1m"
 
 SRC_LANG = "vie_Latn"
 TGT_LANG = "khm_Khmr"
-MAX_LENGTH = 128
+MAX_LENGTH = 256
 
 # ==========================================
 # 2. LOAD DỮ LIỆU TỪ CSV
@@ -32,7 +32,7 @@ print("Loading dataset...")
 
 
 dataset = load_dataset("csv", data_files=DATA_PATH)
-dataset = dataset["train"].train_test_split(test_size=0.1, seed=42)
+dataset = dataset["train"].train_test_split(test_size=0.01, seed=42)
 
 # ==========================================
 # 3. TOKENIZER & PREPROCESSING
@@ -95,8 +95,8 @@ model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentran
 # ==========================================
 print("Applying LoRA...")
 lora_config = LoraConfig(
-    r=16,                     # Rank của ma trận (16 là mức cân bằng tốt cho 100k data)
-    lora_alpha=32,            # Hệ số scale
+    r=64,                     # Rank của ma trận (16 là mức cân bằng tốt cho 100k data)
+    lora_alpha=128,            # Hệ số scale
     target_modules=["q_proj", "v_proj", "k_proj", "out_proj"], # Các module cần fine-tune trong Attention
     lora_dropout=0.05,
     bias="none",
@@ -111,23 +111,53 @@ model.print_trainable_parameters() # Sẽ in ra số lượng tham số được
 # ==========================================
 data_collator = DataCollatorForSeq2Seq(tokenizer, model=model)
 
+# training_args = Seq2SeqTrainingArguments(
+#     output_dir=OUTPUT_DIR,
+#     eval_strategy="steps",
+#     eval_steps=1000,              # Đánh giá sau mỗi 1000 bước
+#     save_strategy="steps",
+#     save_steps=1000,
+#     learning_rate=2e-4,           # Learning rate lớn hơn một chút cho LoRA (thường là 2e-4 hoặc 3e-4)
+#     per_device_train_batch_size=8,# Giảm xuống 4 nếu báo lỗi OOM
+#     per_device_eval_batch_size=8,
+#     weight_decay=0.01,
+#     save_total_limit=3,
+#     num_train_epochs=3,           # 3 epochs cho 100k data là hợp lý để bắt đầu
+#     predict_with_generate=False,  # Tắt sinh text lúc train để tiết kiệm VRAM & Thời gian
+#     fp16=True,                    # Bật Mixed Precision
+#     logging_steps=100,
+#     optim="paged_adamw_8bit"      # Trình tối ưu hóa nhẹ cho GPU
+# )
+
 training_args = Seq2SeqTrainingArguments(
     output_dir=OUTPUT_DIR,
     eval_strategy="steps",
-    eval_steps=1000,              # Đánh giá sau mỗi 1000 bước
+    eval_steps=5000,              
     save_strategy="steps",
-    save_steps=1000,
-    learning_rate=2e-4,           # Learning rate lớn hơn một chút cho LoRA (thường là 2e-4 hoặc 3e-4)
-    per_device_train_batch_size=8,# Giảm xuống 4 nếu báo lỗi OOM
-    per_device_eval_batch_size=8,
+    save_steps=5000,
+    learning_rate=1e-4,           
+    
+    # --- ĐIỀU CHỈNH CHO MAX_LENGTH 256 & 2 GPU 12GB ---
+    per_device_train_batch_size=2,  # Giữ ở 2, nếu vẫn OOM hãy hạ xuống 1
+    per_device_eval_batch_size=2,   # QUAN TRỌNG: Phải hạ từ 8 xuống 2 để tránh treo khi Eval
+    gradient_accumulation_steps=16, # Tăng lên 16 để Global Batch Size = 2 * 2 * 16 = 64
+    # ------------------------------------------------
+    
+    warmup_steps=2000,              
+    num_train_epochs=1,             
     weight_decay=0.01,
     save_total_limit=3,
-    num_train_epochs=3,           # 3 epochs cho 100k data là hợp lý để bắt đầu
-    predict_with_generate=False,  # Tắt sinh text lúc train để tiết kiệm VRAM & Thời gian
-    fp16=True,                    # Bật Mixed Precision
+    predict_with_generate=False,    # Vẫn nên để False khi train 1 triệu câu để tiết kiệm thời gian
+    fp16=True,                    
     logging_steps=100,
-    optim="paged_adamw_8bit"      # Trình tối ưu hóa nhẹ cho GPU
+    optim="paged_adamw_8bit",     
+    ddp_find_unused_parameters=False,
+    gradient_checkpointing=True,    # BẮT BUỘC để chạy được 256 tokens trên card 12GB
+    
+    # Tối ưu hóa thêm cho việc giải phóng bộ nhớ
+    eval_accumulation_steps=1       # Giải phóng tensor đánh giá ngay lập tức để tiết kiệm VRAM
 )
+
 
 trainer = Seq2SeqTrainer(
     model=model,
@@ -142,5 +172,5 @@ print("Start training...")
 trainer.train()
 
 # Lưu PEFT Adapter (Rất nhẹ, chỉ khoảng chục MB)
-trainer.save_model(f"{OUTPUT_DIR}/final_adapter")
+trainer.save_model(f"{OUTPUT_DIR}/final_adapter_1m")
 print("Training completed and saved!")
